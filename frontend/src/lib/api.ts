@@ -3,7 +3,7 @@ import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, AxiosError } f
 import { getAuthToken, getRefreshToken, removeAuthToken, setAuthToken, setRefreshToken } from './auth';
 
 // Base API configuration
-const BACKEND_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+const BACKEND_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://127.0.0.1:8000';
 
 // Create axios instance
 const apiClient: AxiosInstance = axios.create({

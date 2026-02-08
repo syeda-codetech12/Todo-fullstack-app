@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     refresh_token_expire_days: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
 
     # Rate limiting
-    rate_limit_requests: int = 1000  # requests per hour per user (increased for development)
+    rate_limit_requests: int = 4000  # requests 4 hour per user (increased for development)
     rate_limit_window: int = 3600  # in seconds (1 hour)
 
     # Application settings
