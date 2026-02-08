@@ -1,115 +1,86 @@
 from fastapi import Request, HTTPException, status
-from fastapi.responses import JSONResponse
-from typing import Callable, Awaitable
+from starlette.middleware.base import BaseHTTPMiddleware
 from auth.jwt_handler import verify_access_token
 from auth.rate_limiter import check_rate_limit
 import time
 
 
-class AuthRateLimitMiddleware:
+class AuthRateLimitMiddleware(BaseHTTPMiddleware):
     """
     Middleware to handle authentication and rate limiting.
     """
 
-    def __init__(self, app):
-        self.app = app
-
-    async def __call__(self, scope, receive, send):
-        if scope["type"] != "http":
-            return await self.app(scope, receive, send)
-
-        request = Request(scope)
+    async def dispatch(self, request: Request, call_next):
         # Extract the path and method
         path = request.url.path
-        method = scope.get("method", "")
+        method = request.method
 
         # Skip authentication and rate limiting for certain paths
         if path in ["/", "/health", "/docs", "/redoc", "/openapi.json"]:
-            return await self.app(scope, receive, send)
+            response = await call_next(request)
+            return response
 
         # Skip authentication for OPTIONS requests (preflight requests)
         if method == "OPTIONS":
-            return await self.app(scope, receive, send)
+            response = await call_next(request)
+            return response
 
-        # Skip authentication for public auth endpoints (register, login)
-        if path.startswith("/api/auth/") and any(endpoint in path for endpoint in ["/register", "/login"]):
+        # Skip authentication for public auth endpoints (register, login, refresh)
+        if path.startswith("/api/auth/") and any(endpoint in path for endpoint in ["/register", "/login", "/refresh"]):
             # Still apply rate limiting for these endpoints to prevent abuse
             # For now, we'll skip rate limiting for these endpoints
-            pass
+            response = await call_next(request)
+            return response
         elif path.startswith("/api/auth"): 
             # For other auth endpoints (like /me), require authentication
             auth_header = request.headers.get("Authorization")
             if not auth_header or not auth_header.startswith("Bearer "):
-                response = JSONResponse(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    content={"detail": "Not authenticated"}
-                )
-                await response(scope, receive, send)
-                return
+                # Set a flag in request state to indicate authentication failure
+                request.state.auth_error = "Not authenticated"
+            else:
+                token = auth_header.split(" ")[1]
+                try:
+                    payload = verify_access_token(token)
+                    user_id = payload.get("sub")
 
-            token = auth_header.split(" ")[1]
-            try:
-                payload = verify_access_token(token)
-                user_id = payload.get("sub")
+                    if not user_id:
+                        # Set a flag in request state to indicate authentication failure
+                        request.state.auth_error = "Could not validate credentials"
+                    else:
+                        # Add user_id to request state for use in endpoints
+                        request.state.user_id = user_id
 
-                if not user_id:
-                    response = JSONResponse(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        content={"detail": "Could not validate credentials"}
-                    )
-                    await response(scope, receive, send)
-                    return
+                        # Check rate limit for authenticated user
+                        check_rate_limit(user_id)
 
-                # Add user_id to request state for use in endpoints
-                request.state.user_id = user_id
-
-                # Check rate limit for authenticated user
-                check_rate_limit(user_id)
-
-            except Exception:
-                response = JSONResponse(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    content={"detail": "Could not validate credentials"}
-                )
-                await response(scope, receive, send)
-                return
+                except Exception:
+                    # Set a flag in request state to indicate authentication failure
+                    request.state.auth_error = "Could not validate credentials"
         else:
             # For non-auth endpoints, require authentication
             auth_header = request.headers.get("Authorization")
             if not auth_header or not auth_header.startswith("Bearer "):
-                response = JSONResponse(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    content={"detail": "Not authenticated"}
-                )
-                await response(scope, receive, send)
-                return
+                # Set a flag in request state to indicate authentication failure
+                request.state.auth_error = "Not authenticated"
+            else:
+                token = auth_header.split(" ")[1]
+                try:
+                    payload = verify_access_token(token)
+                    user_id = payload.get("sub")
 
-            token = auth_header.split(" ")[1]
-            try:
-                payload = verify_access_token(token)
-                user_id = payload.get("sub")
+                    if not user_id:
+                        # Set a flag in request state to indicate authentication failure
+                        request.state.auth_error = "Could not validate credentials"
+                    else:
+                        # Add user_id to request state for use in endpoints
+                        request.state.user_id = user_id
 
-                if not user_id:
-                    response = JSONResponse(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        content={"detail": "Could not validate credentials"}
-                    )
-                    await response(scope, receive, send)
-                    return
+                        # Check rate limit for authenticated user
+                        check_rate_limit(user_id)
 
-                # Add user_id to request state for use in endpoints
-                request.state.user_id = user_id
+                except Exception:
+                    # Set a flag in request state to indicate authentication failure
+                    request.state.auth_error = "Could not validate credentials"
 
-                # Check rate limit for authenticated user
-                check_rate_limit(user_id)
-
-            except Exception:
-                response = JSONResponse(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    content={"detail": "Could not validate credentials"}
-                )
-                await response(scope, receive, send)
-                return
-
-        # Continue with the request
-        await self.app(scope, receive, send)
+        response = await call_next(request)
+        return response

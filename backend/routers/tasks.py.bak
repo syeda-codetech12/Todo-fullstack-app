@@ -6,7 +6,7 @@ from typing import List
 from auth.security import get_current_user_id_from_token, verify_user_access
 from auth.rate_limiter import check_rate_limit
 from database import get_async_session
-from models.task import Task, TaskPublic, TaskStatus
+from models.task import Task, TaskPublic
 from models.user import User
 from schemas.task import TaskCreate, TaskUpdate, TaskFilter, TaskResponse, TaskListResponse
 from datetime import datetime
@@ -32,31 +32,23 @@ async def get_user_tasks(
     # Check rate limit
     check_rate_limit(current_user_id)
 
-    # Build base query with filters
-    base_query = select(Task).where(Task.user_id == user_id, Task.deleted_at.is_(None))
+    # Build query with filters
+    query = select(Task).where(Task.user_id == user_id, Task.deleted_at.is_(None))
 
     if filters.status:
-        base_query = base_query.where(Task.status == filters.status)
+        query = query.where(Task.status == filters.status)
 
     if filters.priority:
-        base_query = base_query.where(Task.priority == filters.priority)
+        query = query.where(Task.priority == filters.priority)
 
     # Count total for pagination
-    count_query = select(func.count(Task.id)).where(Task.user_id == user_id, Task.deleted_at.is_(None))
-    
-    if filters.status:
-        count_query = count_query.where(Task.status == filters.status)
+    count_result = await session.execute(select(func.count()).select_from(query.subquery()))
+    total_count = count_result.scalar()
 
-    if filters.priority:
-        count_query = count_query.where(Task.priority == filters.priority)
+    # Apply pagination
+    query = query.offset(filters.offset).limit(filters.limit)
 
-    count_result = await session.execute(count_query)
-    total_count = count_result.scalar_one()
-
-    # Apply pagination to base query
-    paginated_query = base_query.offset(filters.offset).limit(filters.limit)
-
-    result = await session.execute(paginated_query)
+    result = await session.execute(query)
     tasks = result.scalars().all()
 
     return TaskListResponse(tasks=tasks, total_count=total_count)
@@ -77,15 +69,6 @@ async def create_task(
 
     # Check rate limit
     check_rate_limit(current_user_id)
-
-    # Verify that the user exists before creating the task
-    user_result = await session.execute(select(User).where(User.id == user_id))
-    user_exists = user_result.scalar_one_or_none()
-    if not user_exists:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
-        )
 
     # Create task
     db_task = Task(
@@ -120,13 +103,24 @@ async def get_task(
     # Check rate limit
     check_rate_limit(current_user_id)
 
-    # Get task with explicit filtering
-    result = await session.execute(
-        select(Task).where(Task.id == task_id, Task.user_id == user_id, Task.deleted_at.is_(None))
-    )
-    task = result.scalar_one_or_none()
+    # Get task
+    task = await session.get(Task, task_id)
 
     if not task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found"
+        )
+
+    # Verify that the task belongs to the specified user
+    if task.user_id != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: Task does not belong to the specified user"
+        )
+
+    # Verify that the task is not soft-deleted
+    if task.deleted_at is not None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Task not found"
@@ -152,11 +146,8 @@ async def update_task(
     # Check rate limit
     check_rate_limit(current_user_id)
 
-    # Get task with explicit filtering
-    result = await session.execute(
-        select(Task).where(Task.id == task_id, Task.user_id == user_id, Task.deleted_at.is_(None))
-    )
-    db_task = result.scalar_one_or_none()
+    # Get task
+    db_task = await session.get(Task, task_id)
 
     if not db_task:
         raise HTTPException(
@@ -164,9 +155,20 @@ async def update_task(
             detail="Task not found"
         )
 
-    # Store the original status before updating
-    original_status = db_task.status
-    
+    # Verify that the task belongs to the specified user
+    if db_task.user_id != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: Task does not belong to the specified user"
+        )
+
+    # Verify that the task is not soft-deleted
+    if db_task.deleted_at is not None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found"
+        )
+
     # Update task fields
     for field, value in task_update.model_dump(exclude_unset=True).items():
         setattr(db_task, field, value)
@@ -175,11 +177,12 @@ async def update_task(
     db_task.updated_at = datetime.utcnow()
 
     # Handle status change to completed
-    if task_update.status == TaskStatus.COMPLETED and original_status != TaskStatus.COMPLETED:
+    if task_update.status == "completed" and db_task.status != "completed":
         db_task.completed_at = datetime.utcnow()
-    elif task_update.status != TaskStatus.COMPLETED and original_status == TaskStatus.COMPLETED:
+    elif task_update.status != "completed" and db_task.status == "completed":
         db_task.completed_at = None
 
+    session.add(db_task)
     await session.commit()
     await session.refresh(db_task)
 
@@ -202,13 +205,24 @@ async def delete_task(
     # Check rate limit
     check_rate_limit(current_user_id)
 
-    # Get task with explicit filtering
-    result = await session.execute(
-        select(Task).where(Task.id == task_id, Task.user_id == user_id, Task.deleted_at.is_(None))
-    )
-    db_task = result.scalar_one_or_none()
+    # Get task
+    db_task = await session.get(Task, task_id)
 
     if not db_task:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task not found"
+        )
+
+    # Verify that the task belongs to the specified user
+    if db_task.user_id != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: Task does not belong to the specified user"
+        )
+
+    # Verify that the task is not already soft-deleted
+    if db_task.deleted_at is not None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Task not found"
@@ -218,6 +232,7 @@ async def delete_task(
     db_task.deleted_at = datetime.utcnow()
     db_task.updated_at = datetime.utcnow()
 
+    session.add(db_task)
     await session.commit()
 
     return {"message": "Task soft deleted successfully"}

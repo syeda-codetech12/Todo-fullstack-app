@@ -1,4 +1,4 @@
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from auth.jwt_handler import get_current_user_id
 from typing import Optional
@@ -8,13 +8,28 @@ from config import settings
 security = HTTPBearer()
 
 
-def get_current_user_id_from_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> str:
+def get_current_user_id_from_token(request: Request) -> str:
     """
     Get the current user ID from the authorization token.
     This function is used as a dependency in protected routes.
     """
-    token = credentials.credentials
-    return get_current_user_id(token)
+    # Check if middleware set an auth error
+    if hasattr(request.state, 'auth_error') and request.state.auth_error:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=request.state.auth_error,
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    # If no auth error, get user_id from state
+    if hasattr(request.state, 'user_id') and request.state.user_id:
+        return request.state.user_id
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 
 def verify_admin_access(user_id: str = Depends(get_current_user_id_from_token)):

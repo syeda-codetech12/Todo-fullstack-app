@@ -1,6 +1,6 @@
 // src/lib/api.ts
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, AxiosError } from 'axios';
-import { getAuthToken, removeAuthToken, setAuthToken } from './auth';
+import { getAuthToken, getRefreshToken, removeAuthToken, setAuthToken, setRefreshToken } from './auth';
 
 // Base API configuration
 const BACKEND_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
@@ -39,6 +39,14 @@ apiClient.interceptors.response.use(
   async (error: AxiosError) => {
     const originalRequest = error.config as AxiosRequestConfig & { _retry?: boolean };
 
+    console.log('API Error intercepted:', {
+      status: error.response?.status,
+      message: error.message,
+      url: error.config?.url,
+      hasResponse: !!error.response,
+      isRetry: !!originalRequest._retry
+    });
+
     // Handle network connectivity issues
     if (!error.response) {
       console.error('Network error:', error.message);
@@ -48,15 +56,54 @@ apiClient.interceptors.response.use(
 
     // If token has expired and we haven't retried yet
     if (error.response?.status === 401 && !originalRequest._retry) {
+      console.log('Attempting token refresh...');
       originalRequest._retry = true;
 
-      // Attempt to refresh token here if refresh token mechanism exists
-      // For now, we'll just remove the token and redirect to login
-      removeAuthToken();
+      // Attempt to refresh token
+      const refreshToken = getRefreshToken();
 
-      // Redirect to login page
-      if (typeof window !== 'undefined') {
-        window.location.href = '/signin';
+      if (refreshToken) {
+        try {
+          console.log('Calling refresh endpoint...');
+          // Call the refresh endpoint
+          const refreshResponse = await axios.post(`${BACKEND_BASE_URL}/api/auth/refresh`,
+            `refresh_token=${encodeURIComponent(refreshToken)}`,
+            {
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+              }
+            }
+          );
+
+          console.log('Refresh response received:', refreshResponse.status);
+          
+          if (refreshResponse.data.access_token) {
+            // Update tokens
+            setAuthToken(refreshResponse.data.access_token);
+            setRefreshToken(refreshResponse.data.refresh_token);
+
+            console.log('Tokens updated, retrying original request...');
+            // Retry the original request with the new token
+            originalRequest.headers.Authorization = `Bearer ${refreshResponse.data.access_token}`;
+            return apiClient(originalRequest);
+          }
+        } catch (refreshError: any) {
+          console.error('Token refresh failed:', refreshError?.message || refreshError);
+          // If refresh fails, remove tokens and redirect to login
+          removeAuthToken();
+
+          if (typeof window !== 'undefined') {
+            window.location.href = '/signin';
+          }
+        }
+      } else {
+        console.warn('No refresh token available');
+        // No refresh token available, redirect to login
+        removeAuthToken();
+
+        if (typeof window !== 'undefined') {
+          window.location.href = '/signin';
+        }
       }
 
       return Promise.reject(error);

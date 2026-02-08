@@ -66,13 +66,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       // Make API call to backend
       const response = await apiClient.post('/auth/login', { email, password });
 
-      // Extract token from response (backend returns access_token and token_type)
-      const { access_token: token, token_type } = response.data;
+      // Extract token from response (backend returns access_token, refresh_token and token_type)
+      const { access_token: token, refresh_token: refreshToken, token_type } = response.data;
 
       // Store auth info FIRST before making subsequent API calls
       // This ensures the apiClient interceptor can pick up the token
       setAuthToken(token);
-      // Note: Backend doesn't return refresh token, so we'll store null for now
+      setRefreshToken(refreshToken);
 
       // Get user info after successful login - using apiClient for consistency
       // The apiClient interceptor will automatically add the Authorization header
@@ -86,7 +86,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setSessionState({
         user,
         token,
-        refreshToken: null, // Backend doesn't return refresh token
+        refreshToken,
         isAuthenticated: true,
         isLoading: false,
       });
@@ -118,7 +118,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
       // After successful registration, log the user in to get the token
       const loginResponse = await apiClient.post('/auth/login', { email, password });
-      const { access_token: token, token_type } = loginResponse.data;
+      const { access_token: token, refresh_token: refreshToken, token_type } = loginResponse.data;
 
       // Get user info after successful authentication
       const userResponse = await apiClient.get('/auth/me');
@@ -126,14 +126,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
       // Store auth info
       setAuthToken(token);
-      // Note: Backend doesn't return refresh token, so we'll store null for now
+      setRefreshToken(refreshToken);
       setUserInfo(user);
 
       // Update state
       setSessionState({
         user,
         token,
-        refreshToken: null, // Backend doesn't return refresh token
+        refreshToken,
         isAuthenticated: true,
         isLoading: false,
       });

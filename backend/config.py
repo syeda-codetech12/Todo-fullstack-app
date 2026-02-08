@@ -16,11 +16,11 @@ class Settings(BaseSettings):
     # JWT settings
     secret_key: str = os.getenv("SECRET_KEY", "your-super-secret-key-here-make-it-long-and-random")
     algorithm: str = os.getenv("ALGORITHM", "HS256")
-    access_token_expire_minutes: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))  # 24 hours
+    access_token_expire_minutes: int = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "4000")) 
     refresh_token_expire_days: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
 
     # Rate limiting
-    rate_limit_requests: int = 100  # requests per hour per user
+    rate_limit_requests: int = 1000  # requests per hour per user (increased for development)
     rate_limit_window: int = 3600  # in seconds (1 hour)
 
     # Application settings
