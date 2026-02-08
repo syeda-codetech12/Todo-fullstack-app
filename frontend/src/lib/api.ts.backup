@@ -16,16 +16,16 @@ const apiClient: AxiosInstance = axios.create({
 
 // Request interceptor to add JWT token
 apiClient.interceptors.request.use(
-  (config: any) => {  // Using 'any' to avoid TypeScript issues during build
-    const token = getAuthToken();
-    if (token) {
-      if (!config.headers) {
-        config.headers = {};
-      }
-      config.headers.Authorization = `Bearer ${token}`;
-    }
-    return config;
-  },
+  (config: AxiosRequestConfig) => {
+//     const token = getAuthToken();
+//     if (token) {
+//       config.headers = {
+//         ...config.headers,
+//         Authorization: `Bearer ${token}`,
+//       };
+//     }
+//     return config;
+//   },
   (error: AxiosError) => {
     return Promise.reject(error);
   }
@@ -84,9 +84,6 @@ apiClient.interceptors.response.use(
 
             console.log('Tokens updated, retrying original request...');
             // Retry the original request with the new token
-            if (!originalRequest.headers) {
-              originalRequest.headers = {};
-            }
             originalRequest.headers.Authorization = `Bearer ${refreshResponse.data.access_token}`;
             return apiClient(originalRequest);
           }

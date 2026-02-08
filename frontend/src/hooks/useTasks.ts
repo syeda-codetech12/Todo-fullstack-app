@@ -106,11 +106,11 @@ export const useTasks = (): TasksState => {
     setError(null);
 
     try {
-      // Determine the new status based on current status
-      const newStatus = task.status === 'completed' ? 'pending' : 'completed';
+      // Toggle the completed status
+      const newCompletedStatus = !task.completed;
       const response = await apiClient.put(`/users/${user.id}/tasks/${id}`, {
         ...task,
-        status: newStatus
+        completed: newCompletedStatus
       });
       setTasks(tasks.map(t => t.id === id ? response.data.data : t));
     } catch (err: any) {
